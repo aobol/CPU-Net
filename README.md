@@ -4,6 +4,7 @@ Cyclic Positional U-Net (CPU-Net) is a transfer learning model for ad-hoc pulse 
     - GPU: Nvidia A100 Node
     - RAM usage: About 6Gb
     - Training Time: 20 - 30min
+- To run this code, open `TrainAndPlot.ipynb`
 - This code should run on a standard python environment with PyTorch installed.
     - PyTorch Version used: 1.9.0, but should be compatible with earlier version as well
     - we recommend installing a small gadget `tqdm` to monitor the time/progress of `for` loops. Installation can be done with `pip install tqdm --user`
