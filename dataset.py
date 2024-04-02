@@ -4,80 +4,59 @@ import torch.nn as nn
 import pickle
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
+from tools import calculate_tn
+from tqdm import tqdm
+import random
+from scipy.optimize import curve_fit
+
 '''
 Parameters for training waveform construction.
 LSPAN: how many sample to select to the left of time point 0 (start of the rise)
 RSPAN: how many sample to select to the right of time point 0 (start of the rise)
 SEQ_LEN: total length of the input pulses, always equal to LSPAN+RSPAN
 '''
-LSPAN=300
-RSPAN=500
+LSPAN=400
+RSPAN=400
 SEQ_LEN=LSPAN+RSPAN
-
+t_n = 99
+base_thres = 0.005 # mean of first 50 smaples should be less than this value
+tail_thres = 0.80 # last 50 samples should be greater than this value
+# chi_squared_threshold= 0.002
+# popt_threshold = -2.6e-4
 class SplinterDataset(Dataset):
     '''
     Splinter is the name of our local Ge detector
     '''
-
-    def __init__(self, event_dset = "DetectorPulses.pickle", siggen_dset ="SimulatedPulses.pickle"):
-        
-        event_dict = self.event_loader(event_dset)
-        siggen_dict = self.event_loader(siggen_dset)
-        
-        self.siggen_dict = siggen_dict
-        self.event_dict = event_dict
-        self.size = len( self.event_dict)
-        self.sim_size = len( self.siggen_dict)
-        print(self.size)
-
-        self.plot_waveform(np.random.randint(self.size))
-        
-        
-        
+    def __init__(self, event_dset="DetectorPulses.pickle", siggen_dset="SimulatedPulses.pickle", n_max = 1e5, chi_squared_threshold=1, popt_threshold_under=-2, popt_threshold_over=2):
+        self.n_max = n_max
+        self.chi_squared_threshold = chi_squared_threshold
+        self.popt_threshold_over = popt_threshold_over
+        self.popt_threshold_under = popt_threshold_under
+        self.chi_squared_coeff = []
+        self.tau_fits = []
+        self.event_dict, self.rejected_wf = self.event_loader_data(event_dset)
+        print("Number of Data events:", len(self.event_dict))
+        self.siggen_dict = self.event_loader_sim(siggen_dset)
+        print("Number of Simulations events", len(self.siggen_dict))
+        # Set the class attributes for thresholds here
+        self.size = len(self.event_dict)
+        self.sim_size = len(self.siggen_dict)
+        self.event_ids = [wdict["event"] for wdict in self.siggen_dict]  # Adjust based on your data structure
+        self.plot_waveform(np.random.randint(self.size)) 
         
     def __len__(self):
-        return self.size
-    
-    
-    def transform(self,wf, tp0, MC=False):
-        wf = np.array(wf)
-        try:
-            tp50=tp0[0]
-        except:
-            tp50 = tp0
-        left_padding = max(LSPAN-tp50,0)
-        right_padding = max((RSPAN+tp50)-len(wf),0)
-        wf = np.pad(wf,(left_padding, right_padding),mode='edge')
-        tp50 = tp50+left_padding
-        wf = wf[(tp50-LSPAN):(tp50+RSPAN)]
-        wf = (wf - wf.min())/(wf.max()-wf.min())
-        return wf
-            
-        
+        # Return the minimum size between event_dict and siggen_dict to avoid out-of-range errors
+        return min(len(self.event_dict), len(self.siggen_dict))
 
-    # @torchsnooper.snoop()
     def __getitem__(self, idx):
-        #stack two waveforms together randomly
-        # np.random.seed(idx)
-        siggendict1 = self.siggen_dict[np.random.randint(self.sim_size)]
-        siggendict2 = self.siggen_dict[np.random.randint(self.sim_size)]
-        randflag = np.random.rand()
-        # if randflag > 0.7:
-        #     alpha = 1
-        # elif randflag < 0.1:
-        #     alpha = 511/(2615-511)
-        # else:
-        #     alpha = np.random.rand()
-        alpha = 511/(2614.5-511)
-        if randflag > 0.3:
-            alpha = 1
-        # elif randflag > 0.2:
-        #     alpha = np.random.rand()
-        siggenwf1 = self.transform(siggendict1["wf"],siggendict1["tp0"],MC=True)
-        siggenwf2 = self.transform(siggendict2["wf"],siggendict2["tp0"],MC=True)
-        siggenwf = (siggenwf1*alpha+siggenwf2*(1-alpha))
-        
-        return self.transform(self.event_dict[idx]["wf"],self.event_dict[idx]["tp0"])[None,:], siggenwf[None,:], self.event_dict[idx]["wf"][None,:SEQ_LEN]
+        # Use a single simulated waveform based on the index and transform it
+        siggenwf = self.transform(self.siggen_dict[idx]["wf"], self.siggen_dict[idx]["tp0"])
+        # Transform the real waveform for comparison or any other purpose
+        real_wf = self.transform(self.event_dict[idx]["wf"], self.event_dict[idx]["tp0"])
+        # Return the real waveform, the single transformed simulated waveform, and the original waveform
+        event_id = self.siggen_dict[idx].get("event", -1)  # Default to -1 or suitable value if not found
+        # Return the event_id as part of the output
+        return real_wf[None, :], siggenwf[None, :], self.event_dict[idx]["wf"][None, :SEQ_LEN], event_id
         
     def return_label(self):
         return self.trainY
@@ -91,35 +70,118 @@ class SplinterDataset(Dataset):
         else:
             return self.output_transform.recon_waveform(wf)
     
-    #Load event from .pickle file
-    def event_loader(self, address,elow=-99999,ehi=99999):
+
+    def normalize_waveform(self, wf):
+        """Normalize waveform to have values between 0 and 1."""
+        min_val = np.min(wf)
+        max_val = np.max(wf)
+        if max_val > min_val:
+            return (wf - min_val) / (max_val - min_val)
+        else:
+            # Handle the case where max_val equals min_val (e.g., constant waveforms)
+            return np.zeros_like(wf)  # or wf * 0 to return a waveform of zeros
+
+    def transform(self, wf, tp0):
+        """Transform waveform by padding based on tp0 and then normalizing."""
+        wf = np.array(wf)
+        # Ensure tp0 is an integer
+        tp0 = int(round(tp0))
+        left_padding = max(LSPAN - tp0, 0)
+        right_padding = max((RSPAN + tp0) - len(wf), 0)
+        # Apply padding
+        wf_padded = np.pad(wf, (left_padding, right_padding), mode='edge')
+        # Adjust tp0 after padding
+        tp0_adjusted = tp0 + left_padding
+        # Slice the waveform around the adjusted tp0 to ensure consistent length
+        wf_sliced = wf_padded[(tp0_adjusted - LSPAN):(tp0_adjusted + RSPAN)]
+        # Normalize the waveform after padding and slicing
+        wf_normalized = self.normalize_waveform(wf_sliced)
+        return wf_normalized
+
+    def event_loader_sim(self, address, elow=-99999, ehi=99999):
         wf_list = []
-        ts_list = []
-        count = 0
+        count=0
         with (open(address, "rb")) as openfile:
             while True:
+                if count >self.n_max:
+                    break
                 try:
                     wdict = pickle.load(openfile, encoding='latin1')
                     wf = wdict["wf"]
                     if "dc_label" in wdict.keys() and wdict["dc_label"] != 0.0:
                         continue
-                    tp0 = wdict["tp0"]
+                    # Calculate tp0 using calculate_t90 or any other method without normalizing here
                     try:
-                        tp0=tp0[0]
-                    except:
-                        tp0 = tp0
-                    nwf = (wf - wf.min())/(wf.max()-wf.min())
-                    if np.nan in nwf:
-                        continue
-                    # if (self.pileup_cut(nwf)>7):
-                    #     continue
-                    # plt.plot(nwf[tp0:tp0+100])
-                    if len(self.transform(wdict["wf"],wdict["tp0"],MC=True)) == SEQ_LEN:
-                        wf_list.append(wdict)
-                        count += 1
+                        tp0 = calculate_tn(wf,t_n)  # Assuming calculate_t90 returns an appropriate tp0 value
+                    except Exception as e:
+                        continue  # Skip this waveform if tp0 cannot be calculated
+                    # Store tp0 in the waveform dictionary for later transformation
+                    wdict["tp0"] = tp0
+                    transformed_wf = self.transform(wf, tp0)
+                    if len(transformed_wf) == SEQ_LEN:
+                        if np.all(~np.isnan(transformed_wf)) and np.any(transformed_wf != 0):
+                            wf_list.append(wdict)
+                            count+=1
+                    if count % 10000 == 0:
+                        print(f"{count} waveforms loaded from simulations.")
                 except EOFError:
                     break
         return wf_list
+    
+    def event_loader_data(self, address, elow=-99999, ehi=99999):
+        wf_list = []
+        wf_list_rejected = []
+        count=0
+        print("Chi squared cut is",self.chi_squared_threshold)
+        print("Tail slope cut over is", self.popt_threshold_over)
+        print("Tail slope cut under is", self.popt_threshold_under)
+        with (open(address, "rb")) as openfile:
+            while True:
+                if count >self.n_max:
+                    break
+                try:
+                    wdict = pickle.load(openfile, encoding='latin1')
+                    wf = wdict["wf"]
+                    if "dc_label" in wdict.keys() and wdict["dc_label"] != 0.0:
+                        continue
+                    try:
+                        tp0 = calculate_tn(wf,t_n)
+                    except Exception as e:
+                        continue  # Skip this waveform if tp0 cannot be calculated
+                    # Store tp0 in the waveform dictionary for later transformation
+                    wdict["tp0"] = tp0
+                    transformed_wf = self.transform(wf, tp0)
+                    if len(transformed_wf) == SEQ_LEN:
+                        # Calculate the mean of the first 250 samples
+                        mean_first_250 = np.mean(transformed_wf[:250])
+                        #Skip waveforms with any value > 0.01 in the first 250 samples
+                        if np.any(np.array(transformed_wf[:250]) > 0.01):
+                            wf_list_rejected.append(transformed_wf)
+                            continue
+                        #Skip waveforms with any value < tail_thres in the last 50 samples
+                        if np.any(np.array(transformed_wf[-50:]) < tail_thres):
+                            wf_list_rejected.append(transformed_wf)
+                            continue
+                        # Check if the first 100 samples' mean is <= 0.1 AND last 50 samples' mean is > 0.5
+                        if mean_first_250 <= base_thres:
+                            chi_squared, popt = self.process_wf_log_linear(transformed_wf)
+                            if chi_squared < self.chi_squared_threshold and popt >self.popt_threshold_under and popt < self.popt_threshold_over:
+                                # print('Calc chi squared', chi_squared)
+                                # print('Calc popt_threshold', popt)
+                                if np.all(~np.isnan(transformed_wf)) and np.any(transformed_wf != 0):
+                                    self.chi_squared_coeff.append(chi_squared)
+                                    self.tau_fits.append(popt)
+                                    wf_list.append(wdict)
+                                    count+=1
+                            else:
+                                wf_list_rejected.append(transformed_wf)
+                        else:
+                            wf_list_rejected.append(transformed_wf)
+                        if count % 10000 == 0:
+                            print(f"{count} waveforms loaded from data.")
+                except EOFError:
+                    break
+        return wf_list, wf_list_rejected
     
     def get_field_from_dict(self, input_dict, fieldname):
         field_list = []
@@ -134,15 +196,42 @@ class SplinterDataset(Dataset):
         plt.figure(figsize=(15,15))
         plt.subplot(211)
         for i in range(100):
-            waveform, waveform_deconv, rawwf = self.__getitem__(i)
+            waveform, waveform_deconv, rawwf, _ = self.__getitem__(i)
             plt.plot(waveform[0],linewidth=0.5)
-        plt.title("Smoothed Data")
-        plt.xlabel("Time Sample")
-        plt.ylabel("ADC counts")
+        plt.title("100 Random Pulses")
+        # plt.axvline(250)
+        # plt.axhline(tail_thres)
+        plt.xlabel("Time Sample [ns]")
+        plt.ylabel("Normalized pulses")
         plt.subplot(212)
         for i in range(100):
-            waveform, waveform_deconv, rawwf = self.__getitem__(i)
+            waveform, waveform_deconv, rawwf, _ = self.__getitem__(i)
             plt.plot(waveform_deconv[0],linewidth=0.5)
-        plt.title("Simulated WF")
-        plt.xlabel("Time Sample")
-        plt.ylabel("ADC counts")
+        plt.title("100 Simulated WF")
+        # plt.axvline(250)
+        plt.xlabel("Time Sample [ns]")
+        plt.ylabel("Normalized pulses")
+        plt.title("100 Random Simulated Pulses")
+    
+    def linear(self, x, a, b):
+        """Linear function ax + b"""
+        return a * x + b
+    
+    def process_wf_log_linear(self, wf):
+        sample = 300
+        if len(wf) < sample:
+            # Return default values if waveform is too short
+            return np.nan, [np.nan, np.nan]  # Ensure popt is a list or array to safely index [0] later
+        x_data = np.arange(sample)
+        y_data = np.log(np.clip(wf[-sample:], 1e-10, None))  # Log of last 300 samples
+        try:
+            popt, pcov = curve_fit(self.linear, x_data, y_data, maxfev=100000)
+            # Calculate residuals and chi-squared for goodness of fit
+            residuals = y_data - self.linear(x_data, *popt)
+            chi_squared = np.sum((residuals ** 2) / self.linear(x_data, *popt))
+        except Exception as e:
+            # Handle fitting errors
+            popt = [np.nan, np.nan]  # Ensure popt is a list or array
+            chi_squared = np.nan
+        return -chi_squared, popt[0] #chi squared would be negative since log of number between 0,1 is negavtive, so we return positive value  
+    

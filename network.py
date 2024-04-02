@@ -208,90 +208,27 @@ class RNN(nn.Module):
         else:
             hidden =  hidden[-1]
         
-        # Cosine Attention
-        inner_product = torch.einsum("ijl,il->ij",output, hidden)
-        output_norm = torch.linalg.norm(output,dim=-1)
-        hidden_norm = torch.linalg.norm(hidden,dim=-1).unsqueeze(-1).expand(output_norm.size())
-        attention_score = torch.softmax(inner_product/(output_norm*hidden_norm),dim=-1) #Softmax over seq_len dimension
+        attention_scores = self.calculate_attention_scores(output, hidden)
         
         if self.get_attention:
-            return attention_score
-        
-        context = torch.sum(attention_score.unsqueeze(-1).expand(*output.size()) * output,dim=1) #Sum over seq_len dimension with attention score multiplied to output
-        x = self.fcnet(torch.cat([context,hidden],dim=-1)) #concatenate context vector with last hidden state output
+            return attention_scores  # Return attention scores if get_attention flag is True
 
+        # Apply attention scores
+        context = torch.sum(attention_scores.unsqueeze(-1).expand_as(output) * output, dim=1)
+        x = self.fcnet(torch.cat([context, hidden], dim=-1))
         return torch.sigmoid(x)
-
-class CNNDiscriminator(nn.Module):
-    def __init__(self):
-        super(CNNDiscriminator, self).__init__()
     
-        do = 0.5
-        self.seq_len = LSPAN+RSPAN
-        conv1, conv2, conv3, conv4 = (8,16,24,32)
-        self.CNNBackbone = nn.Sequential(
-            torch.nn.Conv1d(1,conv1,8),
-            torch.nn.BatchNorm1d(conv1),
-            torch.nn.LeakyReLU(),
-            torch.nn.MaxPool1d(kernel_size=2),
-            PositionalEncoding(conv1,start=0,dropout=do),
-            torch.nn.Conv1d(conv1,conv2,6),
-            torch.nn.BatchNorm1d(conv2),
-            torch.nn.LeakyReLU(),
-            torch.nn.MaxPool1d(kernel_size=2),
-            PositionalEncoding(conv2,start=0,dropout=do),
-            torch.nn.Conv1d(conv2,conv3,4),
-            torch.nn.BatchNorm1d(conv3),
-            torch.nn.LeakyReLU(),
-            torch.nn.MaxPool1d(kernel_size=2),
-            PositionalEncoding(conv3,start=0,dropout=do),
-            torch.nn.Conv1d(conv3,conv4,4),
-            torch.nn.BatchNorm1d(conv4),
-            torch.nn.LeakyReLU(),
-            PositionalEncoding(conv4,start=0,dropout=do),
-        )
-        self.fcnet = nn.Sequential(
-            torch.nn.Linear(2976 , 512),
-            torch.nn.BatchNorm1d(512),
-            torch.nn.LeakyReLU(),
-            torch.nn.Dropout(do),
-            torch.nn.Linear(512, 1),
-            torch.nn.Sigmoid()
-        )
-        
- 
-    def forward(self, x):
-        batch = x.size(0)
-        x = self.CNNBackbone(x)
-        x = x.view(batch,-1)
-        x = self.fcnet(x)
-        return x
+    def calculate_attention_scores(self, output, hidden):
+        """Calculate attention scores."""
+        inner_product = torch.einsum("ijl,il->ij", output, hidden)
+        output_norm = torch.linalg.norm(output, dim=-1)
+        hidden_norm = torch.linalg.norm(hidden, dim=-1, keepdim=True)
+        attention_scores = torch.softmax(inner_product / (output_norm * hidden_norm + 1e-8), dim=-1)
+        return attention_scores
 
-
-class FCDiscriminator(nn.Module):
-    def __init__(self):
-        super(FCDiscriminator, self).__init__()
-
-        do = 0.2
-        self.seq_len = LSPAN+RSPAN
-        conv1, conv2, conv3, conv4 = (8,16,24,32)
-
-        self.fcnet = nn.Sequential(
-            torch.nn.Linear(self.seq_len,512),
-            torch.nn.LeakyReLU(),
-            torch.nn.Dropout(do),
-            torch.nn.Linear(512, 128),
-            torch.nn.LeakyReLU(),
-            torch.nn.Dropout(do),
-            torch.nn.Linear(128, 32),
-            torch.nn.LeakyReLU(),
-            torch.nn.Dropout(do),
-            torch.nn.Linear(32, 1),
-            torch.nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        batch = x.size(0)
-        x = x.view(-1,self.seq_len)
-        x = self.fcnet(x)
-        return x
+    def get_attention_weights(self, x):
+        """A method to get attention weights explicitly."""
+        self.get_attention_flag = True  # Ensure the model returns attention scores
+        attention_weights = self.forward(x)
+        self.get_attention_flag = False  # Reset the flag
+        return attention_weights
