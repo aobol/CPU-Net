@@ -361,7 +361,7 @@ def weights_init_normal(m):
         torch.nn.init.constant_(m.bias.data, 0.0)
         
         
-def check_peak_alignment(loader, ATN, tolerance=2):
+def check_peak_alignment(loader, ATN, tolerance, DEVICE):
     """
     Check the alignment of peak current amplitudes between original and translated waveforms.
 
@@ -372,7 +372,7 @@ def check_peak_alignment(loader, ATN, tolerance=2):
     Parameters:
     - loader (DataLoader): DataLoader providing batches of original and deconvolved waveforms.
     - ATN (torch.nn.Module): The Ad-hoc Translation Network model used for translating deconvolved waveforms.
-    - tolerance (int, optional): The allowed difference in bin index for peak alignment check. Default is 2.
+    - tolerance (int, optional): The allowed difference in bin index for peak alignment check.
 
     Returns:
     - A tuple (bool, float, float) containing:
