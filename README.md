@@ -8,7 +8,7 @@ Cyclic Positional U-Net (CPU-Net) is a transfer learning model for ad-hoc pulse 
 - Utilizes U-Net architecture with positional encoding for its generators (A2B and B2A). This allows for accurate pulse translation between real and simulated data while maintaining cycle and identity consistency.
 - Discriminators (DA and DB) are Recurrent Neural Networks (RNN) with attention mechanisms, evaluating translated pulses and optimizing the performance of generators through adversarial training.
 - CPU-Net accurately translates the simulated pulses to match data pulses, while reproducing the ensemble distribution of the data.
-- Although tailored for HPGe detectors, CPU-Net's architecture is adaptable to a wide range of signal processing tasks across different scientific domains, offering broad 
+- Although designed for HPGe detectors, CPU-Net's architecture is adaptable to different scientific domains for convoluting and deconvoluting noise
 
 ## Dataset Preparation
 
