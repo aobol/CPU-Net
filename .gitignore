@@ -1,0 +1,6 @@
+.DS_Store
+data_emulation/icpc_siggen/
+figs/
+plot_data/
+.ipynb_checkpoints
+

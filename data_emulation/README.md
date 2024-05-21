@@ -14,10 +14,10 @@ This repository contains code for modeling electronic response and noise in sign
 ## Code Structure
 - **CreatingSignalLibrary.ipynb**: Jupyter notebook used to create a library of simulated charge signals.
 - **SimulatingElectronicResponse.ipynb**: Jupyter notebook used to add to the library with waveforms complete with background and noise
-- **Normal_Library/**: Directory to store the generated library of charge signals.
+- **Normal_Library**: Directory to store the generated library of charge signals.
 - **dep_waveforms.npz**: Data file containing DEP waveforms.
 - **fep_waveforms.npz**: Data file containing FEP waveforms.
-- **config_files/**: Directory containing configuration files for the simulation.
+- **config_files**: Directory containing configuration files for the simulation.
 - **fields/**: Directory containing field data files.
 - **my_stester_commands.txt**: Text file containing commands for stester.
 
@@ -38,5 +38,5 @@ This repository contains code for modeling electronic response and noise in sign
 
 ## Additional Notes
 - Ensure the existence of a folder named **Normal_Library** in the directory to successfully run the simulation for creating the signal library.
-- Modify configuration files in **config_files/** to customize simulation parameters.
+- Modify configuration files in **config_files** to customize simulation parameters.
 - Execute the provided code snippets sequentially for desired analysis and visualization of charge signals.

@@ -41,7 +41,7 @@ class SplinterDataset(Dataset):
         # Set the class attributes for thresholds here
         self.size = len(self.event_dict)
         self.sim_size = len(self.siggen_dict)
-        self.event_ids = [wdict["event"] for wdict in self.siggen_dict]  # Adjust based on your data structure
+        self.event_ids = [wdict["event"] for wdict in self.siggen_dict]
         self.plot_waveform(np.random.randint(self.size)) 
         
     def __len__(self):
@@ -192,26 +192,28 @@ class SplinterDataset(Dataset):
     def get_current_amp(self,wf):
         return max(np.diff(wf.flatten()))
     
-    def plot_waveform(self,idx):
-        plt.figure(figsize=(15,15))
-        plt.subplot(211)
+    def plot_waveform(self, idx):
+        fig, axs = plt.subplots(1, 2, figsize=(18, 6))  # Create a figure with two subplots side by side
+
+        # Plotting 100 Random Pulses
         for i in range(100):
             waveform, waveform_deconv, rawwf, _ = self.__getitem__(i)
-            plt.plot(waveform[0],linewidth=0.5)
-        plt.title("100 Random Pulses")
-        # plt.axvline(250)
-        # plt.axhline(tail_thres)
-        plt.xlabel("Time Sample [ns]")
-        plt.ylabel("Normalized pulses")
-        plt.subplot(212)
+            axs[0].plot(waveform[0], linewidth=0.5)
+        axs[0].set_title("100 Random Data Pulses")
+        axs[0].set_xlabel("Time Sample [ns]")
+        axs[0].set_ylabel("Normalized Pulses")
+        axs[0].grid(True, linestyle='--', linewidth=0.5)
+
+        # Plotting 100 Simulated WF
         for i in range(100):
             waveform, waveform_deconv, rawwf, _ = self.__getitem__(i)
-            plt.plot(waveform_deconv[0],linewidth=0.5)
-        plt.title("100 Simulated WF")
-        # plt.axvline(250)
-        plt.xlabel("Time Sample [ns]")
-        plt.ylabel("Normalized pulses")
-        plt.title("100 Random Simulated Pulses")
+            axs[1].plot(waveform_deconv[0], linewidth=0.5)
+        axs[1].set_title("100 Random Simulated Pulses")
+        axs[1].set_xlabel("Time Sample [ns]")
+        axs[1].set_ylabel("Normalized Pulses")
+        axs[1].grid(True, linestyle='--', linewidth=0.5)
+        plt.tight_layout()  
+        plt.savefig('figs/inputs.png')
     
     def linear(self, x, a, b):
         """Linear function ax + b"""
