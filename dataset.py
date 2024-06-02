@@ -18,11 +18,13 @@ SEQ_LEN: total length of the input pulses, always equal to LSPAN+RSPAN
 LSPAN=400
 RSPAN=400
 SEQ_LEN=LSPAN+RSPAN
-t_n = 99
+t_n = 99.9
 base_thres = 0.005 # mean of first 50 smaples should be less than this value
 tail_thres = 0.80 # last 50 samples should be greater than this value
 # chi_squared_threshold= 0.002
 # popt_threshold = -2.6e-4
+norm_tail_height = 0.80
+norm_samples = 5
 class SplinterDataset(Dataset):
     '''
     Splinter is the name of our local Ge detector
@@ -39,10 +41,9 @@ class SplinterDataset(Dataset):
         self.siggen_dict = self.event_loader_sim(siggen_dset)
         print("Number of Simulations events", len(self.siggen_dict))
         # Set the class attributes for thresholds here
-        self.size = len(self.event_dict)
-        self.sim_size = len(self.siggen_dict)
+        self.size = min(len(self.event_dict),len(self.siggen_dict))
         self.event_ids = [wdict["event"] for wdict in self.siggen_dict]
-        self.plot_waveform(np.random.randint(self.size)) 
+        self.plot_waveform() 
         
     def __len__(self):
         # Return the minimum size between event_dict and siggen_dict to avoid out-of-range errors
@@ -50,13 +51,13 @@ class SplinterDataset(Dataset):
 
     def __getitem__(self, idx):
         # Use a single simulated waveform based on the index and transform it
-        siggenwf = self.transform(self.siggen_dict[idx]["wf"], self.siggen_dict[idx]["tp0"])
+        siggenwf = self.transform(self.siggen_dict[idx]["wf"], self.siggen_dict[idx]["tp0"], sim=True)
         # Transform the real waveform for comparison or any other purpose
         real_wf = self.transform(self.event_dict[idx]["wf"], self.event_dict[idx]["tp0"])
         # Return the real waveform, the single transformed simulated waveform, and the original waveform
         event_id = self.siggen_dict[idx].get("event", -1)  # Default to -1 or suitable value if not found
         # Return the event_id as part of the output
-        return real_wf[None, :], siggenwf[None, :], self.event_dict[idx]["wf"][None, :SEQ_LEN], event_id
+        return real_wf[None, :], siggenwf[None, :], self.event_dict[idx], self.event_dict[idx]
         
     def return_label(self):
         return self.trainY
@@ -72,6 +73,22 @@ class SplinterDataset(Dataset):
     
 
     def normalize_waveform(self, wf):
+        """Normalize waveform by dividing by the average of the last norm_samples samples and shifting the waveform 
+           so that the average of the first 200 samples is zero."""
+        tail_mean = np.mean(wf[-norm_samples:])  # Define the tail region as the last 5 samples
+        if tail_mean != 0:
+            normalized_wf = wf * norm_tail_height / tail_mean
+        else:
+            normalized_wf = wf  # If the tail mean is zero, return the waveform as is to avoid division by zero
+
+        # Shift the waveform so that the average of the first 200 samples is zero
+        first_200_mean = np.mean(normalized_wf[:200])
+        normalized_wf = normalized_wf - first_200_mean
+
+        return normalized_wf
+
+
+    def normalize_sim_waveform(self, wf):
         """Normalize waveform to have values between 0 and 1."""
         min_val = np.min(wf)
         max_val = np.max(wf)
@@ -81,7 +98,7 @@ class SplinterDataset(Dataset):
             # Handle the case where max_val equals min_val (e.g., constant waveforms)
             return np.zeros_like(wf)  # or wf * 0 to return a waveform of zeros
 
-    def transform(self, wf, tp0):
+    def transform(self, wf, tp0, sim=False):
         """Transform waveform by padding based on tp0 and then normalizing."""
         wf = np.array(wf)
         # Ensure tp0 is an integer
@@ -96,6 +113,9 @@ class SplinterDataset(Dataset):
         wf_sliced = wf_padded[(tp0_adjusted - LSPAN):(tp0_adjusted + RSPAN)]
         # Normalize the waveform after padding and slicing
         wf_normalized = self.normalize_waveform(wf_sliced)
+        # Don't normalize if it is sim as it is already normalized
+        if sim:
+            return self.normalize_sim_waveform(wf_sliced)
         return wf_normalized
 
     def event_loader_sim(self, address, elow=-99999, ehi=99999):
@@ -151,6 +171,10 @@ class SplinterDataset(Dataset):
                     # Store tp0 in the waveform dictionary for later transformation
                     wdict["tp0"] = tp0
                     transformed_wf = self.transform(wf, tp0)
+                    # Skip waveforms if the transformed waveform between samples 400 to 500 is less than 0.9
+                    if np.any(transformed_wf[400:420] < 0.92):
+                        wf_list_rejected.append(transformed_wf)
+                        continue
                     if len(transformed_wf) == SEQ_LEN:
                         # Calculate the mean of the first 250 samples
                         mean_first_250 = np.mean(transformed_wf[:250])
@@ -169,6 +193,8 @@ class SplinterDataset(Dataset):
                                 # print('Calc chi squared', chi_squared)
                                 # print('Calc popt_threshold', popt)
                                 if np.all(~np.isnan(transformed_wf)) and np.any(transformed_wf != 0):
+                                    # if np.max(transformed_wf)>=0.93: #this cleans the ORNL data that has bumps on top, remove for other data
+                                    #     continue
                                     self.chi_squared_coeff.append(chi_squared)
                                     self.tau_fits.append(popt)
                                     wf_list.append(wdict)
@@ -192,28 +218,34 @@ class SplinterDataset(Dataset):
     def get_current_amp(self,wf):
         return max(np.diff(wf.flatten()))
     
-    def plot_waveform(self, idx):
+    def plot_waveform(self):
         fig, axs = plt.subplots(1, 2, figsize=(18, 6))  # Create a figure with two subplots side by side
 
         # Plotting 100 Random Pulses
-        for i in range(100):
+        # axs[0].axhline(0.965)
+
+        for i in range(1000):
             waveform, waveform_deconv, rawwf, _ = self.__getitem__(i)
             axs[0].plot(waveform[0], linewidth=0.5)
-        axs[0].set_title("100 Random Data Pulses")
+
+        axs[0].set_title("200 Random Data Pulses")
         axs[0].set_xlabel("Time Sample [ns]")
         axs[0].set_ylabel("Normalized Pulses")
-        axs[0].grid(True, linestyle='--', linewidth=0.5)
+        axs[0].grid(True, which='both', linestyle='--', linewidth=0.5)
+        axs[0].minorticks_on()
+        axs[0].grid(which='minor', linestyle=':', linewidth='0.5')
 
         # Plotting 100 Simulated WF
-        for i in range(100):
+        for i in range(200):
             waveform, waveform_deconv, rawwf, _ = self.__getitem__(i)
             axs[1].plot(waveform_deconv[0], linewidth=0.5)
-        axs[1].set_title("100 Random Simulated Pulses")
+        axs[1].set_title("200 Random Simulated Pulses")
         axs[1].set_xlabel("Time Sample [ns]")
         axs[1].set_ylabel("Normalized Pulses")
-        axs[1].grid(True, linestyle='--', linewidth=0.5)
-        plt.tight_layout()  
-        plt.savefig('figs/inputs.png')
+        axs[1].grid(True, which='both', linestyle='--', linewidth=0.5)
+        axs[1].minorticks_on()
+        axs[1].grid(which='minor', linestyle=':', linewidth='0.5')
+        plt.savefig('figs/inputs.png',dpi=200)
     
     def linear(self, x, a, b):
         """Linear function ax + b"""

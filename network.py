@@ -162,9 +162,9 @@ class PositionalUNet(nn.Module):
         out = []
         
         # Normalize the output waveforms to interval between [0,1]
-        for ibatch in range(output.size(0)):
-            out.append(((output[ibatch,0] - output[ibatch,0].min()) / (output[ibatch,0].max() - output[ibatch,0].min())).unsqueeze(0).unsqueeze(0))
-        output = torch.cat(out,dim=0)
+        # for ibatch in range(output.size(0)):
+        #     out.append(((output[ibatch,0] - output[ibatch,0].min()) / (output[ibatch,0].max() - output[ibatch,0].min())).unsqueeze(0).unsqueeze(0))
+        # output = torch.cat(out,dim=0)
         
         return output
     
