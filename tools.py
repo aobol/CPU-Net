@@ -192,41 +192,6 @@ def get_roc(sig,bkg):
     fpr, tpr, thr = roc_curve(testY, predY)
     return fpr,tpr,thr,auc
 
-
-# def get_tail_slope(wf):
-#     '''
-#     This function calculates the tail slope of input waveform
-#     '''
-#     premax_wf = wf[:wf.argmax()]
-#     point97 = np.argmin(np.abs(premax_wf - 0.97))
-#     last_pt = point97+200
-#     first_occurence = np.mean(wf[(last_pt-50):(last_pt)])
-#     last_occurence = np.mean(wf[-100:-50])
-#     return (last_occurence-first_occurence)/(len(wf)-50-last_pt)
-
-
-# def get_tail_slope(wf):
-#     '''
-#     This function calculates the tail slope of input waveform.
-#     Skips the calculation if the waveform contains NaN values.
-#     '''
-#     # Check if the waveform contains any NaN values
-#     if np.isnan(wf).any():
-#         # Return NaN or some default value to indicate the issue
-#         return 0
-
-#     premax_wf = wf[:wf.argmax()]
-#     point97 = np.argmin(np.abs(premax_wf - 0.97))
-#     last_pt = point97 + 200
-#     # Ensure last_pt does not exceed the length of wf
-#     last_pt = min(last_pt, len(wf) - 1)
-    
-#     first_occurence = np.mean(wf[(last_pt-50):(last_pt)])
-#     last_occurence = np.mean(wf[-100:-50])
-#     slope = (last_occurence - first_occurence) / (len(wf) - 50 - last_pt)
-
-#     return slope
-
 def linear(x, a, b):
         """Linear function ax + b"""
         return a * x + b
