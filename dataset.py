@@ -20,7 +20,7 @@ RSPAN=400
 SEQ_LEN=LSPAN+RSPAN
 t_n = 99.9
 base_thres = 0.005 # mean of first 50 smaples should be less than this value
-tail_thres = 0.80 # last 50 samples should be greater than this value
+tail_thres = 0.78 # last 50 samples should be greater than this value
 # chi_squared_threshold= 0.002
 # popt_threshold = -2.6e-4
 norm_tail_height = 0.80
@@ -43,7 +43,7 @@ class SplinterDataset(Dataset):
         # Set the class attributes for thresholds here
         self.size = min(len(self.event_dict),len(self.siggen_dict))
         self.event_ids = [wdict["event"] for wdict in self.siggen_dict]
-        self.plot_waveform() 
+        # self.plot_waveform() 
         
     def __len__(self):
         # Return the minimum size between event_dict and siggen_dict to avoid out-of-range errors
@@ -189,6 +189,8 @@ class SplinterDataset(Dataset):
                         # Check if the first 100 samples' mean is <= 0.1 AND last 50 samples' mean is > 0.5
                         if mean_first_250 <= base_thres:
                             chi_squared, popt = self.process_wf_log_linear(transformed_wf)
+                            self.chi_squared_coeff.append(chi_squared)
+                            self.tau_fits.append(popt)
                             if chi_squared < self.chi_squared_threshold and popt >self.popt_threshold_under and popt < self.popt_threshold_over:
                                 # print('Calc chi squared', chi_squared)
                                 # print('Calc popt_threshold', popt)
@@ -219,33 +221,39 @@ class SplinterDataset(Dataset):
         return max(np.diff(wf.flatten()))
     
     def plot_waveform(self):
-        fig, axs = plt.subplots(1, 2, figsize=(18, 6))  # Create a figure with two subplots side by side
+        num_waveforms_to_plot = 100
 
-        # Plotting 100 Random Pulses
-        # axs[0].axhline(0.965)
+        # Create the first figure for all data waveforms
+        plt.figure(figsize=(10, 6))
+        for i in range(num_waveforms_to_plot):
+            # Fetch the real waveform from the dataset
+            real_wf, sim_wf, _, _ = self.__getitem__(i)
+            # Plot the real data waveform on the figure
+            plt.plot(real_wf[0], linewidth=0.5)  # Add label only once for legend
 
-        for i in range(1000):
-            waveform, waveform_deconv, rawwf, _ = self.__getitem__(i)
-            axs[0].plot(waveform[0], linewidth=0.5)
+        plt.title(f"{num_waveforms_to_plot} Data Pulses", fontsize=14)
+        plt.xlabel("Time Sample [ns]", fontsize=12)
+        plt.ylabel("Amplitude", fontsize=12)
+        # plt.minorticks_on()
+        # plt.grid(which='minor', linestyle=':', linewidth='0.5')
+        plt.savefig('figs/all_data_pulses.png', dpi=100)
+        plt.show()
 
-        axs[0].set_title("200 Random Data Pulses")
-        axs[0].set_xlabel("Time Sample [ns]")
-        axs[0].set_ylabel("Normalized Pulses")
-        axs[0].grid(True, which='both', linestyle='--', linewidth=0.5)
-        axs[0].minorticks_on()
-        axs[0].grid(which='minor', linestyle=':', linewidth='0.5')
+        # Create the second figure for all simulated waveforms
+        plt.figure(figsize=(10, 6))
+        for i in range(num_waveforms_to_plot):
+            # Fetch the corresponding simulated waveform from the dataset
+            real_wf, sim_wf, _, _ = self.__getitem__(i)
+            # Plot the simulated waveform on the figure
+            plt.plot(sim_wf[0], linewidth=0.5)  # Add label only once for legend
 
-        # Plotting 100 Simulated WF
-        for i in range(200):
-            waveform, waveform_deconv, rawwf, _ = self.__getitem__(i)
-            axs[1].plot(waveform_deconv[0], linewidth=0.5)
-        axs[1].set_title("200 Random Simulated Pulses")
-        axs[1].set_xlabel("Time Sample [ns]")
-        axs[1].set_ylabel("Normalized Pulses")
-        axs[1].grid(True, which='both', linestyle='--', linewidth=0.5)
-        axs[1].minorticks_on()
-        axs[1].grid(which='minor', linestyle=':', linewidth='0.5')
-        plt.savefig('figs/inputs.png',dpi=200)
+        plt.title(f"{num_waveforms_to_plot} Simulated Pulses", fontsize=14)
+        plt.xlabel("Time Sample [ns]", fontsize=12)
+        plt.ylabel("Amplitude", fontsize=12)
+        # plt.minorticks_on()
+        # plt.grid(which='minor', linestyle=':', linewidth='0.5')
+        plt.savefig('figs/all_simulated_pulses.png', dpi=100)
+        plt.show()
     
     def linear(self, x, a, b):
         """Linear function ax + b"""

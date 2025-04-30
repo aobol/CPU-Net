@@ -1,234 +1,325 @@
-'''
-This script contains the PositionalUNet network along with 3 candidate discriminators:
-* RNN+Attention discriminator
-* CNN+PositionalEncoding Discriminator
-* Fully Connected Discriminators
-we have tested all 3 discriminators, turns out that the RNN+Attention works the best
-'''
+"""network.py
+================
+Core neural‑network components for **CPU‑Net**.
+
+This module defines two groups of models that power the CycleGAN
+translation between simulated and measured HPGe detector pulses:
+
+* **PositionalUNet** – a 1‑D U‑Net enhanced with layer‑wise positional
+  encodings and a *re‑parameterisation* bottleneck (à la Variational
+  Auto‑Encoder) to increase stochastic capacity.  It serves as both the
+  *REN* (sim→data) and *IREN* (data→sim) generators in the pipeline.
+
+* **RNN** – a single‑layer bidirectional GRU discriminator augmented
+  with a Bahdanau‐style attention head; used for both source‑domain and
+  target‑domain adversaries.
+
+All code is *pure‑PyTorch* (≥1.13) and keeps external dependencies to a
+minimum so that portable execution on clusters and workstations is
+straight‑forward.
+
+Example
+-------
+>>> from network import PositionalUNet, RNN
+>>> gen = PositionalUNet().cuda()
+>>> disc = RNN().cuda()
+>>> dummy = torch.randn(8, 1, 800, device="cuda")
+>>> out   = gen(dummy)           # (8, 1, 800)
+>>> score = disc(out)            # (8, 1)
+
+Notes
+-----
+* The `SEQ_LEN` constant is imported from :pymod:`dataset` to stay
+  consistent with the length used during preprocessing.
+* Convolution kernel sizes were optimised for HPGe pulse shapes; feel
+  free to expose them as hyper‑parameters for other detectors.
+* Gradient checkpointing is not enabled by default – memory is rarely a
+  bottleneck on A100s for these models, but can be added via
+  ``torch.utils.checkpoint`` if needed.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.nn.parameter import Parameter
-from torch.nn import init
 import torch.nn.functional as F
-import math
-from dataset import SEQ_LEN
 
+from dataset import SEQ_LEN  # waveform length after alignment/padding
+
+# -----------------------------------------------------------------------------
+# Helper blocks
+# -----------------------------------------------------------------------------
 
 class DoubleConv(nn.Module):
+    """Two consecutive 1‑D convolutions **Conv→BN→LeakyReLU** ×2.
 
-    def __init__(self, in_channels, out_channels, mid_channels=None):
+    Parameters
+    ----------
+    in_channels : int
+        Number of input feature maps.
+    out_channels : int
+        Number of output feature maps.
+    mid_channels : int, optional
+        Hidden channel count.  If *None*, defaults to ``out_channels``.
+    """
+
+    def __init__(self, in_channels: int, out_channels: int, mid_channels: Optional[int] = None):
         super().__init__()
-        if not mid_channels:
-            mid_channels = out_channels
+        mid_channels = mid_channels or out_channels
         self.double_conv = nn.Sequential(
-            nn.Conv1d(in_channels, mid_channels, kernel_size=11, padding=5,bias=False),
+            nn.Conv1d(in_channels, mid_channels, kernel_size=11, padding=5, bias=False),
             nn.BatchNorm1d(mid_channels),
             nn.LeakyReLU(inplace=True),
-            nn.Conv1d(mid_channels, out_channels, kernel_size=7, padding=3,bias=False),
+            nn.Conv1d(mid_channels, out_channels, kernel_size=7, padding=3, bias=False),
             nn.BatchNorm1d(out_channels),
-            nn.LeakyReLU(inplace=True)
+            nn.LeakyReLU(inplace=True),
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # noqa: D401 – simple forward
         return self.double_conv(x)
 
 
 class Down(nn.Module):
+    """Down‑sampling block = **MaxPool/2** → :class:`DoubleConv`."""
 
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
         self.maxpool_conv = nn.Sequential(
-            nn.MaxPool1d(2),
-            DoubleConv(in_channels, out_channels)
+            nn.MaxPool1d(kernel_size=2),
+            DoubleConv(in_channels, out_channels),
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.maxpool_conv(x)
 
 
 class Up(nn.Module):
+    """Up‑sampling block with either bilinear **Upsample** or `ConvTranspose1d`.
 
-    def __init__(self, in_channels, out_channels, bilinear=True):
+    Parameters
+    ----------
+    in_channels : int
+        Channel count of the *concatenated* feature maps
+        (skip‑connection ⊕ upsampled tensor).
+    out_channels : int
+        Desired output channels after the fusion convolution.
+    bilinear : bool, default ``True``
+        If *True* use ``nn.Upsample``; otherwise learnable transpose‑conv.
+    """
+
+    def __init__(self, in_channels: int, out_channels: int, *, bilinear: bool = True):
         super().__init__()
-
-        # if bilinear, use the normal convolutions to reduce the number of channels
         if bilinear:
-            self.up = nn.Upsample(scale_factor=2, mode='linear', align_corners=True)
+            self.up = nn.Upsample(scale_factor=2, mode="linear", align_corners=True)
             self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
         else:
             self.up = nn.ConvTranspose1d(in_channels, in_channels // 2, kernel_size=2, stride=2)
             self.conv = DoubleConv(in_channels, out_channels)
 
-    def forward(self, x1, x2):
+    def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
         x1 = self.up(x1)
-        # input is CHW
-        diffY = x2.size()[2] - x1.size()[2]
-
-        x1 = F.pad(x1, [diffY // 2, diffY - diffY // 2])
-        # if you have padding issues, see
-        x = torch.cat([x2, x1], dim=1)
-        return self.conv(x)
+        # Pad if necessary so that both tensors align
+        diff = x2.size(2) - x1.size(2)
+        x1 = F.pad(x1, [diff // 2, diff - diff // 2])
+        return self.conv(torch.cat([x2, x1], dim=1))
 
 
 class OutConv(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(OutConv, self).__init__()
-        self.conv = nn.Sequential(
-            torch.nn.Conv1d(in_channels, out_channels, kernel_size=1),
-            # torch.nn.LeakyReLU(),
-            # torch.nn.Conv1d(in_channels, out_channels, kernel_size=1),
-        )
+    """Final *1×1* convolution to map features → single waveform channel."""
 
-    def forward(self, x):
+    def __init__(self, in_channels: int, out_channels: int = 1):
+        super().__init__()
+        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # noqa: D401 – simple forward
         return self.conv(x)
-    
-class PositionalEncoding(nn.Module):
 
-    def __init__(self, d_model, start=0, dropout=0.1, max_len=10000,factor=1.0):
-        super(PositionalEncoding, self).__init__()
+
+class PositionalEncoding(nn.Module):
+    """Add deterministic sin/cos positional encodings to a 1‑D feature map.
+
+    This mirrors the formulation from the original *Transformer* paper but
+    is adapted to channel‑first tensors (``N,C,L``).
+
+    Parameters
+    ----------
+    d_model : int
+        Channel dimension of the tensor the encoding will be added to.
+    start : int, default ``0``
+        Starting offset in the pre‑computed positional table.  Useful for
+        the *decoding* path where the spatial resolution differs.
+    dropout : float, default ``0.1``
+        Drop‑out probability applied *after* adding the encoding.
+    max_len : int, default ``10000``
+        Maximum sequence length for which to pre‑compute the table.
+    factor : float, default ``1.0``
+        Multiplicative factor applied to the encoding before addition –
+        allows progressively blending‐in positional information.
+    """
+
+    def __init__(self, d_model: int, *, start: int = 0, dropout: float = 0.1,
+                 max_len: int = 10000, factor: float = 1.0):
+        super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         self.factor = factor
+        self.start = start
 
         pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        position = torch.arange(max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(1, 2)
-        self.register_buffer('pe', pe)
-        self.start = start
-    # @torchsnooper.snoop()
-    def forward(self, x):
-        x = x + self.factor*self.pe[:,:,self.start:(self.start+x.size(2))]
-        x = self.dropout(x)
-        return x
-    
+        self.register_buffer("pe", pe.unsqueeze(0).transpose(1, 2))  # shape (1, C, L)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # noqa: D401 – simple forward
+        x = x + self.factor * self.pe[:, :, self.start:self.start + x.size(2)]
+        return self.dropout(x)
+
+# -----------------------------------------------------------------------------
+# Generator – Positional UNet
+# -----------------------------------------------------------------------------
+
 class PositionalUNet(nn.Module):
-    def __init__(self):
-        super(PositionalUNet, self).__init__()
-        self.bilinear = True
-        
-        multi = 40
-        
-        self.inc = DoubleConv(1, multi)
-        self.down1 = Down(multi, multi*2)
-        self.down2 = Down(multi*2, multi*4)
-        self.down3 = Down(multi*4, multi*8)
-        factor = 2 if self.bilinear else 1
-        self.down4 = Down(multi*8, multi*16 // factor)
-        
-        self.fc_mean = torch.nn.Conv1d(multi*16 // factor, multi*16 // factor,1)
-        self.fc_var = torch.nn.Conv1d(multi*16 // factor, multi*16 // factor,1)
-        
-        self.up1 = Up(multi*16, multi*8 // factor, self.bilinear)
-        self.up2 = Up(multi*8, multi*4 // factor, self.bilinear)
-        self.up3 = Up(multi*4, multi*2 // factor, self.bilinear)
-        self.up4 = Up(multi*2, multi // factor, self.bilinear)
-        self.outc = OutConv(multi // factor, 1)
-        
-        self.pe1 = PositionalEncoding(multi)
-        self.pe2 = PositionalEncoding(multi*2)
-        self.pe3 = PositionalEncoding(multi*4)
-        self.pe4 = PositionalEncoding(multi*8)
-        self.pe5 = PositionalEncoding(multi*16//factor)
-        self.pe6 = PositionalEncoding(multi*8// factor,start=multi*4)
-        self.pe7 = PositionalEncoding(multi*4// factor,start=multi*2)
-        self.pe8 = PositionalEncoding(multi*2// factor,start=multi*2)
-        self.pe9 = PositionalEncoding(multi// factor,start=0,factor=1.0)
-        
-    
-    def reparametrize(self, mu,logvar):
-        std = logvar.mul(0.5).exp_()
-        eps = torch.randn_like(mu)
-        return eps.mul(std).add_(mu)
-    
-    # @torchsnooper.snoop()
-    def forward(self, x):        
+    """U‑Net‑like generator with positional encodings and VAE bottleneck."""
+
+    def __init__(self, *, bilinear: bool = True):
+        super().__init__()
+        self.bilinear = bilinear
+        mult = 40  # base channel multiplier
+        fac = 2 if bilinear else 1
+
+        # Contracting path
+        self.inc   = DoubleConv(1, mult)
+        self.down1 = Down(mult,   mult * 2)
+        self.down2 = Down(mult*2, mult * 4)
+        self.down3 = Down(mult*4, mult * 8)
+        self.down4 = Down(mult*8, mult * 16 // fac)
+
+        # VAE‑style re‑parameterisation at the bottleneck
+        self.fc_mean = nn.Conv1d(mult * 16 // fac, mult * 16 // fac, 1)
+        self.fc_var  = nn.Conv1d(mult * 16 // fac, mult * 16 // fac, 1)
+
+        # Expanding path
+        self.up1  = Up(mult*16, mult * 8 // fac, bilinear)
+        self.up2  = Up(mult*8,  mult * 4 // fac, bilinear)
+        self.up3  = Up(mult*4,  mult * 2 // fac, bilinear)
+        self.up4  = Up(mult*2,  mult // fac,     bilinear)
+        self.outc = OutConv(mult // fac, 1)
+
+        # Positional encodings (distinct for each spatial scale)
+        self.pe1 = PositionalEncoding(mult)
+        self.pe2 = PositionalEncoding(mult*2)
+        self.pe3 = PositionalEncoding(mult*4)
+        self.pe4 = PositionalEncoding(mult*8)
+        self.pe5 = PositionalEncoding(mult*16//fac)
+        self.pe6 = PositionalEncoding(mult*8//fac,  start=mult*4)
+        self.pe7 = PositionalEncoding(mult*4//fac,  start=mult*2)
+        self.pe8 = PositionalEncoding(mult*2//fac,  start=mult*2)
+
+    # ---------------------------------------------------------------------
+    # Helper
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def _reparametrize(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        """VAE re‑parameterisation trick: *z = μ + σ·ϵ*."""
+        std = (0.5 * logvar).exp()
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    # ---------------------------------------------------------------------
+    # Forward
+    # ---------------------------------------------------------------------
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # noqa: D401 – simple forward
+        # Contracting ----------------------------------------------------------------
         x1 = self.pe1(self.inc(x))
         x2 = self.pe2(self.down1(x1))
         x3 = self.pe3(self.down2(x2))
         x4 = self.pe4(self.down3(x3))
         x5 = self.down4(x4)
-        x5 = self.pe5(self.reparametrize(self.fc_mean(x5), self.fc_var(x5)))
-        
-        
+
+        # Re‑parameterisation ---------------------------------------------------------
+        x5 = self.pe5(self._reparametrize(self.fc_mean(x5), self.fc_var(x5)))
+
+        # Expanding ------------------------------------------------------------------
         x = self.pe6(self.up1(x5, x4))
-        x = self.pe7(self.up2(x, x3))
-        x = self.pe8(self.up3(x, x2))
+        x = self.pe7(self.up2(x,  x3))
+        x = self.pe8(self.up3(x,  x2))
         x = self.up4(x, x1)
-        output = self.outc(x)
-        out = []
-        
-        # Normalize the output waveforms to interval between [0,1]
-        # for ibatch in range(output.size(0)):
-        #     out.append(((output[ibatch,0] - output[ibatch,0].min()) / (output[ibatch,0].max() - output[ibatch,0].min())).unsqueeze(0).unsqueeze(0))
-        # output = torch.cat(out,dim=0)
-        
-        return output
-    
-    
-#The RNN based model:
+
+        return self.outc(x)
+
+# -----------------------------------------------------------------------------
+# Discriminator – Attention‑coupled GRU
+# -----------------------------------------------------------------------------
+
 class RNN(nn.Module):
-    def __init__(self,get_attention = False):
-        super(RNN, self).__init__()
-        
-        bidirec = True    #Whether to use a bidirectional RNN
-        self.bidirec =bidirec
-        feed_in_dim = 128
-        self.seg = 1      #Segment waveform to reduce its length. If the original waveform is (2000,1), then segment it with self.seg=5 can reduce its length to (400,5)
-        self.emb_dim = 64
-        self.emb_tick = 1/1000.0
-        self.embedding = nn.Embedding(int(1/self.emb_tick),self.emb_dim)
-        self.seq_len = (SEQ_LEN)//self.seg
-        if bidirec:
-            self.RNNLayer = torch.nn.GRU(input_size = self.emb_dim, hidden_size = feed_in_dim//2,num_layers=1, batch_first=True,bidirectional=True,dropout=0.0)
-            feed_in_dim *= 2
-        else:
-            self.RNNLayer = torch.nn.GRU(input_size = self.emb_dim, hidden_size = feed_in_dim//2,num_layers=1, batch_first=True,bidirectional=False,dropout=0.0)
-        self.attention_weight = nn.Linear(feed_in_dim//2, feed_in_dim//2, bias=False)
-        self.norm = torch.nn.BatchNorm1d(feed_in_dim//2)
+    """Bidirectional GRU discriminator with attention head.
+
+    Parameters
+    ----------
+    get_attention : bool, default ``False``
+        If *True*, :py:meth:`forward` will *return the attention weights*
+        instead of a real/fake score – handy for visualisation.
+    """
+
+    def __init__(self, *, get_attention: bool = False):
+        super().__init__()
         self.get_attention = get_attention
-        
-        fc1, fc2 = (feed_in_dim, int(feed_in_dim*0.25))
-        do = 0.2
-        self.fcnet = nn.Linear(fc1, 1)
 
-    def forward(self, x):
-        x = x.view(-1,self.seq_len)
-        x = (x - x.min(dim=-1,keepdim=True)[0])/(x.max(dim=-1,keepdim=True)[0] - x.min(dim=-1,keepdim=True)[0])
-        x = (x/self.emb_tick).long()
+        # Hyper‑parameters
+        self.seg       = 1            # down‑sample factor (segment length)
+        self.emb_dim   = 64           # lookup‑table dimension
+        self.emb_tick  = 1 / 1000.0   # quantisation step for amplitudes
+        self.seq_len   = SEQ_LEN // self.seg
+        feed_dim       = 128
+
+        # Layers ------------------------------------------------------------------
+        self.embedding = nn.Embedding(int(1 / self.emb_tick), self.emb_dim)
+        self.gru = nn.GRU(
+            input_size=self.emb_dim,
+            hidden_size=feed_dim // 2,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=True,
+        )
+        feed_dim *= 2  # bidirectional doubles hidden size
+
+        self.att_lin = nn.Linear(feed_dim // 2, feed_dim // 2, bias=False)
+        self.fcnet   = nn.Linear(feed_dim, 1)
+
+    # -------------------------------------------------------------------------
+    # Forward helpers
+    # -------------------------------------------------------------------------
+
+    def _calculate_attention(self, output: torch.Tensor, hidden: torch.Tensor) -> torch.Tensor:
+        """Cosine‑similarity attention scores *α* ∈ [0,1] for each timestep."""
+        inner = torch.einsum("ijl,il->ij", output, hidden)
+        denom = torch.linalg.norm(output, dim=-1) * torch.linalg.norm(hidden, dim=-1, keepdim=True)
+        return torch.softmax(inner / (denom + 1e-8), dim=-1)
+
+    # -------------------------------------------------------------------------
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # noqa: D401 – simple forward
+        # --- preprocessing: normalise and embed ----------------------------------
+        x = x.view(-1, self.seq_len)
+        x = (x - x.min(dim=-1, keepdim=True).values) / (x.max(dim=-1, keepdim=True).values - x.min(dim=-1, keepdim=True).values)
+        x = (x / self.emb_tick).long()
         x = self.embedding(x)
-        bsize = x.size(0)
-        output, hidden = self.RNNLayer(x)
-        if self.bidirec:
-            hidden =  hidden[-2:]
-            hidden = hidden.transpose(0,1).reshape(bsize,-1)
-        else:
-            hidden =  hidden[-1]
-        
-        attention_scores = self.calculate_attention_scores(output, hidden)
-        
+
+        # --- GRU -----------------------------------------------------------------
+        out_seq, hidden = self.gru(x)
+        hidden = hidden.transpose(0, 1).reshape(x.size(0), -1)  # concat bidirectional
+
+        # --- Attention -----------------------------------------------------------
+        attn = self._calculate_attention(out_seq, hidden)
         if self.get_attention:
-            return attention_scores  # Return attention scores if get_attention flag is True
+            return attn  # shape (N, L)
 
-        # Apply attention scores
-        context = torch.sum(attention_scores.unsqueeze(-1).expand_as(output) * output, dim=1)
-        x = self.fcnet(torch.cat([context, hidden], dim=-1))
-        return torch.sigmoid(x)
-    
-    def calculate_attention_scores(self, output, hidden):
-        """Calculate attention scores."""
-        inner_product = torch.einsum("ijl,il->ij", output, hidden)
-        output_norm = torch.linalg.norm(output, dim=-1)
-        hidden_norm = torch.linalg.norm(hidden, dim=-1, keepdim=True)
-        attention_scores = torch.softmax(inner_product / (output_norm * hidden_norm + 1e-8), dim=-1)
-        return attention_scores
-
-    def get_attention_weights(self, x):
-        """A method to get attention weights explicitly."""
-        self.get_attention_flag = True  # Ensure the model returns attention scores
-        attention_weights = self.forward(x)
-        self.get_attention_flag = False  # Reset the flag
-        return attention_weights
+        context = torch.sum(attn.unsqueeze(-1) * out_seq, dim=1)
+        score   = self.fcnet(torch.cat([context, hidden], dim=-1))
+        return torch.sigmoid(score)

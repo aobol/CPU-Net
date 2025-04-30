@@ -1,3 +1,6 @@
+import matplotlib as mpl
+mpl.rcParams['pdf.fonttype'] = 42
+mpl.rcParams['ps.fonttype'] = 42
 import numpy as np
 from sklearn.metrics import roc_auc_score, roc_curve
 import torch
@@ -10,6 +13,8 @@ import os
 from tqdm import tqdm
 from dspeed.processors import avg_current, upsampler, moving_window_multi, min_max, time_point_thresh
 from dspeed.errors import DSPFatal
+
+from dspeed.processors import avg_current, upsampler, moving_window_multi, min_max, time_point_thresh
 
 def calc_current_amplitude(waveform, plot=False):
     """
@@ -25,14 +30,13 @@ def calc_current_amplitude(waveform, plot=False):
     A_max : float
         The maximum amplitude of the current waveform after processing.
     """
-    waveform = waveform/1000
+    waveform = waveform
     if plot:
         plt.figure(figsize=(14, 10))  # Increased figure size
         
         plt.subplot(5, 1, 1)  # Added subplot for initial waveform
-        plt.plot(waveform, label="Initial Waveform")
-        plt.title("Initial Waveform")
-        plt.legend()
+        plt.plot(waveform)
+        plt.title("Initial Waveform", fontsize=14)
 
     # Step 1: Calculate the current waveform
     current = np.zeros(len(waveform) - 1)
@@ -41,9 +45,8 @@ def calc_current_amplitude(waveform, plot=False):
     # Plot the current waveform
     if plot:
         plt.subplot(5, 1, 2)
-        plt.plot(current, label="Current Waveform")
-        plt.title("Step 1: Current Waveform")
-        plt.legend()
+        plt.plot(current)
+        plt.title("Step 1: Current Waveform", fontsize=14)
     
     # Step 2: Upsample the current waveform
     upsample_factor = 16
@@ -53,9 +56,8 @@ def calc_current_amplitude(waveform, plot=False):
     # Plot the upsampled current waveform
     if plot:
         plt.subplot(5, 1, 3)
-        plt.plot(upsampled_current, label="Upsampled Current Waveform")
-        plt.title("Step 2: Upsampled Current Waveform")
-        plt.legend()
+        plt.plot(upsampled_current)
+        plt.title("Step 2: Upsampled Current Waveform", fontsize=14)
     
     # Step 3: Apply moving window to the upsampled current
     window_length = 48
@@ -67,9 +69,8 @@ def calc_current_amplitude(waveform, plot=False):
     # Plot the smoothed current waveform
     if plot:
         plt.subplot(5, 1, 4)
-        plt.plot(smoothed_current, label="Smoothed Current Waveform")
-        plt.title("Step 3: Smoothed Current Waveform")
-        plt.legend()
+        plt.plot(smoothed_current)
+        plt.title("Step 3: Smoothed Current Waveform", fontsize=14)
     
     # Step 4: Find A-Max in the smoothed current waveform
     t_min, t_max, A_min, A_max = np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1)
@@ -78,15 +79,15 @@ def calc_current_amplitude(waveform, plot=False):
     # Plot the final waveform highlighting A-Max
     if plot:
         plt.subplot(5, 1, 5)
-        plt.plot(smoothed_current, label="Final Smoothed Current Waveform")
+        plt.plot(smoothed_current)
         plt.scatter(t_max, A_max, color='red', label="A-Max")
-        plt.title("Step 4: Final Smoothed Current Waveform with A-Max")
-        plt.legend()
+        plt.title("Step 4: Smoothed Current Waveform with A-Max", fontsize=14)
+        plt.legend(fontsize=14)
         plt.tight_layout()  # Adjust layout to make sure everything fits
+        plt.savefig('figs/curr_amp_calc.pdf')
         plt.show()
     
     return A_max[0]
-
 
 def process_all_waveforms(directory):
     A_max_values = []
@@ -97,7 +98,6 @@ def process_all_waveforms(directory):
             A_max = calc_current_amplitude(waveform)
             A_max_values.append(A_max)
     return A_max_values
-
 
 
 def calculate_tn(wf, n=90):
@@ -196,43 +196,48 @@ def linear(x, a, b):
         """Linear function ax + b"""
         return a * x + b
     
-def get_tail_slope(wf, plot_sample=False):
+def get_tail_slope(wf, plot_sample=False, return_uncertainty=False):
     sample = 300
-    fit_coefficients = []
     if len(wf) < sample:
-        return 0  # Skip waveforms with fewer than 300 samples
+        return (0, 0) if return_uncertainty else 0
     x_data = np.arange(sample)
-    y_data = np.log(np.clip(wf[-sample:], 1e-10, None))  # Log of last 300 samples, avoiding log(0)
+    y_data = np.log(np.clip(wf[-sample:], 1e-10, None))  # Avoid log(0)
     try:
         popt, pcov = curve_fit(linear, x_data, y_data, maxfev=100000)
         if plot_sample:
             plot_slope_calc(x_data, y_data, popt, wf[-sample:])
+        slope = popt[0]
+        slope_unc = np.sqrt(pcov[0, 0])
     except Exception as e:
-        print(f"Failed to fit waveform due to {e}. Appending NaN values.")
-        return 0
-    return popt[0]
+        print(f"Failed to fit waveform due to {e}.")
+        slope = 0
+        slope_unc = 0
+    return (slope, slope_unc) if return_uncertainty else slope
+
 
 def plot_slope_calc(x_data, y_data, popt, original_wf):
     plt.figure(figsize=(12, 6))
 
     # Plotting the original waveform
     plt.subplot(2, 1, 1)
-    plt.plot(original_wf, 'b-', label='Original Waveform')
-    plt.title('Original Waveform')
-    plt.xlabel('Sample')
-    plt.ylabel('Amplitude')
-    plt.legend()
+    plt.plot(original_wf, 'b-')
+    plt.title('Original Waveform',fontsize=14)
+    plt.xlabel('Sample',fontsize=14)
+    plt.ylabel('Normalized Signal',fontsize=14)
 
     # Plotting the logarithm of the waveform and the linear fit
     plt.subplot(2, 1, 2)
     plt.plot(x_data, y_data, 'ro', label='Logarithm of Waveform', markersize=4)
     plt.plot(x_data, linear(x_data, *popt), 'g-', label='Linear Fit')
-    plt.title('Logarithm of Waveform and Linear Fit')
-    plt.xlabel('Sample')
-    plt.ylabel('Log Amplitude')
+    plt.title('Logarithm of Waveform and Linear Fit',fontsize=14)
+    plt.xlabel('Sample',fontsize=14)
+    plt.ylabel('Log Signal',fontsize=14)
     plt.legend()
+    plt.xticks(fontsize=12)  # Bigger tick labels
+    plt.yticks(fontsize=12)  # Bigger tick labels
     plt.tight_layout()
-    plt.show()   
+    plt.savefig('figs/tail_slope_calc.pdf', dpi=100)
+    plt.show()  
                 
             
 def calc_gradient_penalty(netD, real_data, fake_data):
@@ -370,3 +375,109 @@ def check_peak_alignment(loader, ATN, tolerance, DEVICE):
     # Check if the bins with the highest frequency are within the specified tolerance
     return abs(max_count_index_ca - max_count_index_gan_ca) <= tolerance, peak_location_ca, peak_location_gan_ca
 
+import torch
+
+def differentiable_get_tail_slope(wf, sample=300):
+    """
+    Differentiable approximation of the get_tail_slope function that returns the slope (popt[0]) of the log-linear fit on the tail of the waveform.
+
+    Parameters:
+    - wf (torch.Tensor): The input waveform, expected to be a 1D tensor.
+    - sample (int): The number of samples from the end of the waveform to use for slope estimation.
+
+    Returns:
+    - slope (torch.Tensor): The estimated slope of the log-linear fit (equivalent to popt[0] in the original function).
+    """
+    # Ensure that the waveform is a tensor
+    if not isinstance(wf, torch.Tensor):
+        wf = torch.tensor(wf, dtype=torch.float32)
+
+    # If the waveform is shorter than the sample size, return 0
+    if wf.size(0) < sample:
+        return torch.tensor(0.0)
+
+    # Extract the tail part of the waveform
+    tail = wf[-sample:]
+    
+    # Avoid log(0) by clamping the values
+    tail_clamped = torch.clamp(tail, min=1e-10)
+    
+    # Calculate the natural logarithm of the tail
+    log_tail = torch.log(tail_clamped)
+    
+    # Create a tensor of x_data (time steps)
+    x_data = torch.arange(0, sample, dtype=torch.float32, device=wf.device)
+    
+    # Perform linear regression to estimate the slope
+    A = torch.stack([x_data, torch.ones_like(x_data)], dim=1)  # Design matrix
+    solution = torch.linalg.lstsq(A, log_tail.view(-1, 1)).solution
+    
+    # The slope corresponds to the first element of the solution
+    slope = solution[0, 0]
+    
+    return slope
+
+import torch
+import torch.nn.functional as F
+
+def kl_divergence_loss(real_slopes, fake_slopes, epsilon=1e-8, scale_factor=1e6):
+    """
+    Computes the KL Divergence between the distributions of real and fake tail slopes.
+
+    Parameters:
+    - real_slopes (torch.Tensor): Tensor of tail slopes from the real waveforms.
+    - fake_slopes (torch.Tensor): Tensor of tail slopes from the generated (fake) waveforms.
+    - epsilon (float): A small value added to the standard deviation to prevent zero variance.
+    - scale_factor (float): Factor by which to scale the slopes to avoid numerical issues with small values.
+
+    Returns:
+    - loss (torch.Tensor): The KL Divergence loss.
+    """
+    # Scale the slopes
+    real_slopes_scaled = real_slopes * scale_factor
+    fake_slopes_scaled = fake_slopes * scale_factor
+
+    # Calculate the mean and standard deviation of the real and fake distributions
+    real_mean = torch.mean(real_slopes_scaled)
+    real_std = torch.std(real_slopes_scaled) + epsilon  # Add epsilon to avoid zero std
+    
+    fake_mean = torch.mean(fake_slopes_scaled)
+    fake_std = torch.std(fake_slopes_scaled) + epsilon  # Add epsilon to avoid zero std
+    
+    # Create normal distributions based on the calculated statistics
+    real_distribution = torch.distributions.Normal(real_mean, real_std)
+    fake_distribution = torch.distributions.Normal(fake_mean, fake_std)
+    
+    # Compute the KL Divergence
+    kl_loss = torch.distributions.kl_divergence(real_distribution, fake_distribution)
+    
+    return kl_loss
+
+from scipy.stats import wasserstein_distance
+
+def wasserstein_loss(real_slopes, fake_slopes, scale_factor=1.0):
+    # Ensure the inputs are correctly shaped tensors
+    if len(real_slopes.shape) > 1:
+        real_slopes = real_slopes.flatten()
+    if len(fake_slopes.shape) > 1:
+        fake_slopes = fake_slopes.flatten()
+    
+    # Convert to numpy and scale
+    real_slopes_scaled = real_slopes.detach().cpu().numpy() * scale_factor
+    fake_slopes_scaled = fake_slopes.detach().cpu().numpy() * scale_factor
+    
+    # Ensure the arrays are 1D
+    if isinstance(real_slopes_scaled, (np.ndarray, list)):
+        real_slopes_scaled = np.atleast_1d(real_slopes_scaled)
+    if isinstance(fake_slopes_scaled, (np.ndarray, list)):
+        fake_slopes_scaled = np.atleast_1d(fake_slopes_scaled)
+    
+    # Check that these are indeed arrays with length
+    if real_slopes_scaled.size == 0 or fake_slopes_scaled.size == 0:
+        raise ValueError("Input arrays to wasserstein_distance must not be empty.")
+
+    # Calculate the Wasserstein distance
+    w_loss = wasserstein_distance(real_slopes_scaled, fake_slopes_scaled)
+
+    # Convert the loss to a torch tensor to integrate into your loss function
+    return torch.tensor(w_loss, dtype=torch.float32).to(real_slopes.device)
