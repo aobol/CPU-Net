@@ -20,18 +20,37 @@ Cyclic Positional U-Net (CPU-Net) is a transfer learning model for ad-hoc pulse 
 - `TrainAndPlot.ipynb`: Jupyter notebook for training the model and visualizing results.
 - `Analysis.ipynb`: Notebook for model performance analysis on unseen data.
 
-### Datasets & LFS storage
+## Datasets & Model Weights ( Zenodo )
 
-CPU‑Net relies on two pickled waveforms that live in the `training_data/` directory and are tracked via Git LFS:
+All training/validation pulses **and** pre-trained CPU-Net weights are archived in a single Zenodo record:
 
-Each `.pickle` stores a list of dictionaries with three keys:
+> **Zenodo DOI** **10.5281/zenodo.15311838**  
+> <https://zenodo.org/records/15311838>
+
+### Contents   (≈ 1.9 GB total)
+| File | Purpose | Size |
+|------|---------|------|
+| **Model weights** |  |
+| `fep_REN.pt` / `fep_IREN.pt` | Generators: simulation → data (**REN**) and data → simulation (**IREN**) | 2 × 78 MB |
+| `fep_netD_A.pth` / `fep_netD_B.pth` | Discriminators for data and simulation domains | 2 × 0.5 MB |
+| **Detector pulses** |  |
+| `fep_wf_ornl.pickle` | 107 k full-energy-peak (FEP) pulses | 934 MB |
+| `sep_wf_ornl.pickle` | 3 k single-escape (SEP) pulses | 151 MB |
+| `dep_wf_ornl.pickle` | 1.2 k double-escape (DEP) pulses | 83 MB |
+| **Siggen simulations** |  |
+| `fep_wf_sim.pickle` | 110 k FEP simulations | 461 MB |
+| `sep_wf_sim.pickle` | SEP simulations | 53 MB |
+| `dep_wf_sim.pickle` | DEP simulations | 13 MB |
+
+Each pickle entry is:
 
 ```python
 {
-    "wf"  : np.ndarray  # shape (800,) – aligned, normalised waveform
-    "tp0" : int         # index of 0 % rise (for reference)
-    "energy" : float    # calibrated energy in keV
+    "wf":     np.ndarray,  # (800,) aligned, normalised waveform
+    "tp0":    int,         # index of 0 % rise
+    "energy": float        # calibrated energy in keV
 }
+
 ```
 
 ### Training
