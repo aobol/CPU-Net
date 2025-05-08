@@ -51,15 +51,15 @@ Each pickle entry:
 
 ---
 
-## Training
+## Repository layout
 
-Open `TrainAndPlot.ipynb` and follow the cells for:
-1. Data preprocessing ↔ `SplinterDataset` cuts
-2. Model initialisation (`PositionalUNet`, `RNN`)
-3. Training loop (Cycle‑GAN losses, schedulers)
-4. Check‑point saving to `model_weights/`
-
- GPU NVIDIA A100 (40 GB) – one hour for 7000 iterations.
+| File / Dir | Purpose |
+|------------|---------|
+| `network.py` | Positional U-Net and RNN discriminator definitions |
+| `dataset.py` | `SplinterDataset` – load / align / normalise pickled pulses |
+| `tools.py` | DSP helpers, IoU / ROC metrics, plotting utils |
+| `TrainAndPlot.ipynb` | Training notebook |
+| `Analysis.ipynb` | Validation notebook on held-out data |
 
 ---
 
@@ -81,6 +81,8 @@ Notebook `Analysis.ipynb` evaluates a trained REN/IREN on held‑out data:
 | Validation – single‑site | DEP (double‑escape peak) | Majority single‑site pulses test preservation of single site events. |
 | Validation – multi‑site | SEP (single‑escape peak) | Majority multi‑site pulses stress reproduction of multi site events. |
 
+ GPU NVIDIA A100 (40 GB) – one hour for 7000 iterations.
+
 ### Validation metrics
 
 - Maximum current amplitude (I<sub>max</sub>) – distinguishes single vs multi‑site; REN output should match detector distribution.
@@ -96,8 +98,12 @@ CPU‑Net is released under the MIT License – see `LICENSE`.
 
 ## Contact and support
 
-| Name | Role | Email |
-|------|------|-------|
-| Kevin Bhimani | Lead developer | kevinhbhimani@gmail.com |
-| Aobo Li | Project initiator & mentor | aol002@ucsd.edu |
+## Contact
+
+| Name            | Role / Contribution            | E-mail                  |
+|-----------------|--------------------------------|-------------------------|
+| Kevin Bhimani   | Lead developer                 | kevinhbhimani@gmail.com |
+| Aobo Li         | Project initiator & mentor     | aol002@ucsd.edu         |
+| Julieta Gruszko | Principal investigator         | jgruszko@unc.edu        |
+
 
