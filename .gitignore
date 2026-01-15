@@ -1,6 +1,22 @@
+# Python / pytest
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_cache/**
+.pytest_cache/**/*
+
+# build / packaging
+*.egg-info/
+dist/
+build/
+
+# notebooks
+.ipynb_checkpoints/
+
+# OS
 .DS_Store
+
+# dirs
 data_emulation/icpc_siggen/
 figs/
 plot_data/
-.ipynb_checkpoints
-

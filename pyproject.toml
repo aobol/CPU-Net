@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cpunet"
+version = "1.0.0"
+description = "CPU-Net: Cyclic Positional U-Net (CycleGAN) for HPGe pulse translation"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name="Kevin Bhimani", email="kevinhbhimani@gmail.com" }]
+
+dependencies = [
+  "numpy<2",
+  "numba",
+  "pandas",
+  "scipy",
+  "appdirs",
+  "scikit-learn",
+  "matplotlib",
+  "tqdm",
+  "torch",
+  "dspeed",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

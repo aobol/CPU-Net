@@ -13,7 +13,7 @@ from torch.nn.parameter import Parameter
 from torch.nn import init
 import torch.nn.functional as F
 import math
-from dataset import SEQ_LEN
+from .dataset import SEQ_LEN
 
 
 class DoubleConv(nn.Module):

@@ -1,45 +1,68 @@
 # CPU-Net
 
-Cyclic Positional U-Net (CPU-Net) is a transfer‑learning framework that learns an ad‑hoc translation between simulated and measured HPGe detector pulses.
+**CPU-Net (Cyclic Positional U-Net)** is a transfer-learning framework that learns an ad-hoc translation between **simulated** and **measured** HPGe detector pulses. It is designed to emulate readout electronics effects in pulse-shape simulations using an unpaired, CycleGAN-style training strategy.
 
-## Key Highlights
+**Paper:** *CycleGAN-driven transfer learning for electronics response emulation in high-purity germanium detectors* (Machine Learning: Science and Technology, 2026).  
+DOI: [10.1088/2632-2153/ae3052](https://doi.org/10.1088/2632-2153/ae3052)
 
-- Cycle GAN backbone couples a REN (sim → data) and an IREN (data → sim), enforcing cycle‑ and identity‑consistency.
-- Positional U‑Net generators with layer‑wise positional encodings accurately translate pulse shapes.
-- Attention‑augmented RNN discriminators evaluate translations and guide adversarial training.
-- Translated pulses reproduce ensemble distributions – current amplitude, drift time, tail slope – much better than raw simulations.
-- Architecture can be adapted to other scientific domains where noise convolution/de‑convolution is required.
+**Data & pretrained weights (Zenodo):**  
+DOI: [10.5281/zenodo.15311838](https://doi.org/10.5281/zenodo.15311838)
 
 ---
 
-## Usage
+## Key highlights
 
-### Files and Directories
-
-- `network.py`   CPU‑Net model definitions (Positional UNet + RNN disc).
-- `dataset.py`    `SplinterDataset` for loading & preprocessing pickled pulses.
-- `tools.py`      DSP helpers, IoU / ROC metrics, validation utilities.
-- `TrainAndPlot.ipynb`  Training notebook
-- `Analysis.ipynb`      Validation notebook for unseen data.
+- **CycleGAN backbone** couples a **REN** (sim → data) and an **IREN** (data → sim), enforcing cycle- and identity-consistency.
+- **Positional U-Net generators** use layer-wise positional encodings to better preserve pulse timing/structure (esp. tails).
+- **Attention-augmented RNN discriminators** evaluate translations and guide adversarial training.
+- Translated pulses reproduce ensemble distributions (e.g., **current amplitude**, **drift time**, **tail slope**) better than raw simulations.
+- Architecture is adaptable to other scientific time-series domains where noise convolution / deconvolution is required.
 
 ---
 
-## Datasets & Model Weights ( Zenodo )
+## Quickstart
 
-Data is packaged in Zenodo DOI [10.5281/zenodo.15311838](https://zenodo.org/records/15311838).
+### 1) Create the environment (recommended)
 
-Inventory
+```bash
+conda env create -f environment.yml
+conda activate cpu-net
+```
 
-- `fep_REN.pt`, `fep_IREN.pt`  – generators (sim → data, data → sim)
-- `fep_netD_A.pth`, `fep_netD_B.pth`  – discriminators
-- `_wf_ornl.pickle`  – real FEP / SEP / DEP detector pulses
-- `_wf_sim.pickle`   – matching Geant4 + Siggen simulations
+### 2) Install CPU-Net (editable)
+
+```bash
+pip install -e . --no-deps
+```
+
+### 3) Run tests
+
+```bash
+pip install pytest
+pytest -q
+```
+
+> Note: We pin **NumPy < 2** (see `environment.yml` / `pyproject.toml`) to avoid incompatibilities with compiled dependencies in common scientific Python stacks.
+
+---
+
+## Data & model weights (Zenodo)
+
+Data and pretrained weights are packaged on Zenodo: [10.5281/zenodo.15311838](https://zenodo.org/records/15311838).
+
+### Contents
+
+- `fep_REN.pt`, `fep_IREN.pt` — generators (sim → data, data → sim)
+- `fep_netD_A.pth`, `fep_netD_B.pth` — discriminators
+- `_wf_ornl.pickle` — real FEP / SEP / DEP detector pulses
+- `_wf_sim.pickle` — matching Geant4 + siggen simulations
 
 Each pickle entry:
+
 ```python
 {
-    "wf":     np.ndarray,  # (800,) aligned & normalised waveform
-    "tp0":    int,         # index of 0 % rise
+    "wf":     np.ndarray,  # (800,) aligned & normalized waveform
+    "tp0":    int,         # index of 0% rise
     "energy": float        # calibrated energy (keV)
 }
 ```
@@ -51,59 +74,73 @@ Each pickle entry:
 
 ---
 
+## Running training and analysis
+
+The easiest way to reproduce figures/metrics is via the notebooks:
+
+- `notebooks/Training.ipynb` — training loop (CycleGAN training of REN/IREN)
+- `notebooks/Validation.ipynb` — validation on held-out datasets and distribution-level metrics
+
+
+---
+
 ## Repository layout
 
-| File / Dir | Purpose |
-|------------|---------|
-| `network.py` | Positional U-Net and RNN discriminator definitions |
-| `dataset.py` | `SplinterDataset` – load / align / normalise pickled pulses |
-| `tools.py` | DSP helpers, IoU / ROC metrics, plotting utils |
-| `TrainAndPlot.ipynb` | Training notebook |
-| `Analysis.ipynb` | Validation notebook on held-out data |
+**Core package code:**
+- `src/cpunet/network.py` — CPU-Net model definitions (Positional U-Net + discriminator(s))
+- `src/cpunet/dataset.py` — dataset loading & preprocessing (pickled pulses)
+- `src/cpunet/tools.py` — DSP helpers, metrics (IoU / ROC), plotting utilities
+
+**Notebooks:**
+- `notebooks/Training.ipynb`
+- `notebooks/Validation.ipynb`
+
+**Tests:**
+- `tests/test_imports.py` — import/smoke test for packaging integrity
 
 ---
 
-## Analysis
-
-Notebook `Analysis.ipynb` evaluates a trained REN/IREN on held‑out data:
-
-- Pulse translation and overlay plots.
-- Histograms of real vs sim vs translated pulses.
-- IoU scores for current amplitude, drift time, tail slope.
-
----
-
-## Training & Analysis Strategy
+## Training & validation strategy (as used in the paper)
 
 | Stage | Dataset | Rationale |
-|-------|---------|-----------|
-| Training | FEP (2614 keV full‑energy peak) – mix of single‑ & multi‑site events | Abundant stats + diverse topologies lets REN learn full electronics response. |
-| Validation – single‑site | DEP (double‑escape peak) | Majority single‑site pulses test preservation of single site events. |
-| Validation – multi‑site | SEP (single‑escape peak) | Majority multi‑site pulses stress reproduction of multi site events. |
+|------|---------|-----------|
+| Training | FEP (2614 keV full-energy peak) — mix of single- & multi-site events | Abundant statistics and diverse topologies; translation learned as a global electronics-like effect. |
+| Validation (single-site dominated) | DEP (double-escape peak) | Tests preservation of single-site pulse features. |
+| Validation (multi-site dominated) | SEP (single-escape peak) | Stress-tests reproduction of multi-site behavior. |
 
- GPU NVIDIA A100 (40 GB) – one hour for 7000 iterations.
+Typical training runtime: **~1 GPU-hour** on an **NVIDIA A100 (40 GB)** for **7000 iterations**.
 
-### Validation metrics
+### Validation metrics (examples)
+- **Maximum current amplitude (Imax):** distinguishes single vs multi-site; translated pulses should match detector distribution.
+- **Drift time (Tdrift):** time between 1% and 100% rise; checks realistic charge-collection timing after translation.
+- (Optional) Tail decay constant **τ**: distribution-level check of RC decay behavior.
 
-- Maximum current amplitude (I<sub>max</sub>) – distinguishes single vs multi‑site; REN output should match detector distribution.
-- Drift time (T<sub>drift</sub>) – time between 1 % and 100 % rise; verifies realistic charge‑collection times after translation.
+---
+
+## Citation
+
+If you use this code or the associated data in academic work, please cite the paper:
+
+- **Kevin Bhimani**, Julieta Gruszko, Morgan Clark, John Wilkerson, Aobo Li,  
+  *CycleGAN-driven transfer learning for electronics response emulation in high-purity germanium detectors*,  
+  *Machine Learning: Science and Technology* (2026). DOI: **10.1088/2632-2153/ae3052**
+
+Zenodo dataset DOI: **10.5281/zenodo.15311838**
+
+(Also see `CITATION.cff`.)
 
 ---
 
 ## License
 
-CPU‑Net is released under the MIT License – see `LICENSE`.
+Released under the **MIT License** (see `LICENSE`).
 
 ---
 
-## Contact and support
-
 ## Contact
 
-| Name            | Role / Contribution            | E-mail                  |
-|-----------------|--------------------------------|-------------------------|
-| Kevin Bhimani   | Lead developer                 | kevinhbhimani@gmail.com |
-| Aobo Li         | Project initiator & mentor     | aol002@ucsd.edu         |
-| Julieta Gruszko | Principal investigator         | jgruszko@unc.edu        |
-
-
+| Name | Role / Contribution | Email |
+|------|----------------------|-------|
+| Kevin Bhimani | Lead developer | kevinhbhimani@gmail.com |
+| Aobo Li | Project initiator & mentor | aol002@ucsd.edu |
+| Julieta Gruszko | Principal investigator | jgruszko@unc.edu |

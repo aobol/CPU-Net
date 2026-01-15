@@ -13,7 +13,6 @@ import os
 from tqdm import tqdm
 from dspeed.processors import avg_current, upsampler, moving_window_multi, min_max, time_point_thresh
 from dspeed.errors import DSPFatal
-
 from dspeed.processors import avg_current, upsampler, moving_window_multi, min_max, time_point_thresh
 
 def calc_current_amplitude(waveform, plot=False):

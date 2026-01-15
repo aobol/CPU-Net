@@ -1,0 +1,57 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "CPU-Net"
+type: software
+version: 1.0.0
+date-released: 2026-01-13
+license: MIT
+repository-code: "https://github.com/aobol/CPU-Net"
+url: "https://github.com/aobol/CPU-Net"
+
+authors:
+  - family-names: Bhimani
+    given-names: Kevin
+  - family-names: Gruszko
+    given-names: Julieta
+  - family-names: Clark
+    given-names: Morgan
+  - family-names: Wilkerson
+    given-names: John
+  - family-names: Li
+    given-names: Aobo
+
+keywords:
+  - HPGe
+  - pulse-shape simulation
+  - CycleGAN
+  - transfer learning
+  - U-Net
+
+# Link the Zenodo dataset/weights DOI as an identifier (optional but nice)
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.15311838"
+    description: "Zenodo dataset and pretrained weights"
+
+# Credit redirection: when people click “Cite this repository”, point them to the paper
+preferred-citation:
+  type: article
+  title: "CycleGAN-driven transfer learning for electronics response emulation in high-purity germanium detectors"
+  authors:
+    - family-names: Bhimani
+      given-names: Kevin
+    - family-names: Gruszko
+      given-names: Julieta
+    - family-names: Clark
+      given-names: Morgan
+    - family-names: Wilkerson
+      given-names: John
+    - family-names: Li
+      given-names: Aobo
+  journal: "Machine Learning: Science and Technology"
+  volume: 7
+  issue: 1
+  year: 2026
+  month: 1
+  start: "015009"
+  doi: "10.1088/2632-2153/ae3052"

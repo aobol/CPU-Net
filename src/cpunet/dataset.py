@@ -4,7 +4,7 @@ import torch.nn as nn
 import pickle
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
-from tools import calculate_tn
+from .tools import calculate_tn
 from tqdm import tqdm
 import random
 from scipy.optimize import curve_fit

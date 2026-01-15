@@ -1,0 +1,33 @@
+name: cpu-net
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Core Python
+  - python=3.10
+
+  # Numerics / data
+  - numpy=1.26
+  - numba
+  - pandas
+  - scipy
+  - appdirs
+
+  # ML / metrics
+  - scikit-learn
+
+  # Plotting & notebooks
+  - matplotlib
+  - tqdm
+  - jupyterlab
+  - ipykernel
+
+  # DL stack
+  - pytorch
+
+  # Allow pip installs (dspeed is easiest/most reliable via pip)
+  - pip
+  - pip:
+      - dspeed
